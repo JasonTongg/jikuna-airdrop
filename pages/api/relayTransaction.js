@@ -1,207 +1,168 @@
-import { ethers } from 'ethers';
-import { recoverTypedDataAddress } from 'viem';
+import { ethers, JsonRpcProvider } from "ethers";
+import { recoverTypedDataAddress } from "viem";
 
-// Initialize provider and signer with error handling
 let provider;
 let relayerWallet;
 
 try {
-    if (!process.env.RPC_URL) throw new Error('RPC_URL is not defined');
-    if (!process.env.RELAYER_PRIVATE_KEY) throw new Error('RELAYER_PRIVATE_KEY is not defined');
+	if (!process.env.RPC_URL || !process.env.RELAYER_PRIVATE_KEY) {
+		throw new Error("Missing RPC_URL or RELAYER_PRIVATE_KEY in .env");
+	}
 
-    provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
-    relayerWallet = new ethers.Wallet(process.env.RELAYER_PRIVATE_KEY, provider);
-} catch (setupError) {
-    console.error('Initialization error:', setupError.message);
-    process.exit(1);
+	provider = new JsonRpcProvider(process.env.RPC_URL);
+	relayerWallet = new ethers.Wallet(process.env.RELAYER_PRIVATE_KEY, provider);
+	console.log(
+		process.env.RPC_URL,
+		process.env.RELAYER_PRIVATE_KEY,
+		process.env.CONTRACT_ADDRESS,
+		process.env.CHAIN_ID,
+		process.env.DOMAIN_NAME,
+		process.env.DOMAIN_VERSION
+	);
+} catch (initError) {
+	console.error("Initialization Error:", initError.message);
+	process.exit(1);
 }
 
-// Contract ABI - must match your actual contract
 const CONTRACT_ABI = [
-    {
-        "inputs": [
-            { "internalType": "address", "name": "signer", "type": "address" },
-            { "internalType": "address[]", "name": "users", "type": "address[]" },
-            { "internalType": "uint256", "name": "tier", "type": "uint256" },
-            { "internalType": "uint256", "name": "nonce", "type": "uint256" },
-            { "internalType": "bytes", "name": "signature", "type": "bytes" }
-        ],
-        "name": "setInviteTierWithSig",
-        "outputs": [],
-        "stateMutability": "nonpayable",
-        "type": "function"
-    },
-    {
-        "inputs": [{ "internalType": "address", "name": "", "type": "address" }],
-        "name": "nonces",
-        "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-        "stateMutability": "view",
-        "type": "function"
-    }
+	{
+		inputs: [
+			{ internalType: "address", name: "signer", type: "address" },
+			{ internalType: "address[]", name: "users", type: "address[]" },
+			{ internalType: "uint256", name: "tier", type: "uint256" },
+			{ internalType: "uint256", name: "nonce", type: "uint256" },
+			{ internalType: "bytes", name: "signature", type: "bytes" },
+		],
+		name: "setInviteTierWithSig",
+		outputs: [],
+		stateMutability: "nonpayable",
+		type: "function",
+	},
+	{
+		inputs: [{ internalType: "address", name: "", type: "address" }],
+		name: "nonces",
+		outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+		stateMutability: "view",
+		type: "function",
+	},
 ];
 
-// Enhanced error logger
-const logError = (error, context = {}) => {
-    console.error('\n--- ERROR ---');
-    console.error('Message:', error.message);
-    console.error('Reason:', error.reason || 'N/A');
-    console.error('Code:', error.code || 'N/A');
-    console.error('Context:', context);
-
-    if (error.stack) {
-        console.error('Stack:', error.stack);
-    }
-
-    if (error.data) {
-        console.error('Data:', error.data);
-    }
-
-    console.error('----------------\n');
-};
-
 export default async function handler(req, res) {
-    // Set consistent response headers
-    res.setHeader('Content-Type', 'application/json');
+	res.setHeader("Content-Type", "application/json");
 
-    // Reject non-POST requests
-    if (req.method !== 'POST') {
-        logError(new Error('Invalid method'), { method: req.method });
-        return res.status(405).json({
-            success: false,
-            error: 'Method not allowed',
-            allowedMethods: ['POST']
-        });
-    }
+	if (req.method !== "POST") {
+		return res
+			.status(405)
+			.json({ success: false, error: "Method not allowed" });
+	}
 
-    // Validate content type
-    if (!req.headers['content-type']?.includes('application/json')) {
-        return res.status(415).json({
-            success: false,
-            error: 'Unsupported Media Type',
-            requiredContentType: 'application/json'
-        });
-    }
+	try {
+		const { signer, users, tier, nonce, signature } = req.body;
 
-    try {
-        // Validate request body
-        if (!req.body) {
-            throw new Error('Missing request body');
-        }
+		// Validate env
+		const contractAddress = process.env.CONTRACT_ADDRESS;
+		const domainName = process.env.DOMAIN_NAME || "YourContractName";
+		const domainVersion = process.env.DOMAIN_VERSION || "1";
+		const chainId = parseInt(process.env.CHAIN_ID || "11155111");
 
-        const { signer, users, tier, nonce, signature } = req.body;
+		if (!contractAddress) throw new Error("CONTRACT_ADDRESS is not defined");
 
-        // Validate required fields
-        if (!signer || !users || tier === undefined || nonce === undefined || !signature) {
-            throw new Error('Missing required fields in request body');
-        }
+		console.log("🔧 ENV CHECK:", {
+			CONTRACT_ADDRESS: contractAddress,
+			DOMAIN_NAME: domainName,
+			CHAIN_ID: chainId,
+		});
 
-        // Prepare EIP-712 domain
-        const domain = {
-            name: process.env.DOMAIN_NAME || "YourContractName",
-            version: process.env.DOMAIN_VERSION || "1",
-            chainId: parseInt(process.env.CHAIN_ID || '1'),
-            verifyingContract: process.env.CONTRACT_ADDRESS,
-        };
+		// Validate request body
+		if (
+			!signer ||
+			!users ||
+			tier === undefined ||
+			nonce === undefined ||
+			!signature
+		) {
+			return res
+				.status(400)
+				.json({ success: false, error: "Missing required fields" });
+		}
 
-        // Prepare EIP-712 types
-        const types = {
-            SetInviteTier: [
-                { name: "users", type: "address[]" },
-                { name: "tier", type: "uint256" },
-                { name: "nonce", type: "uint256" },
-            ],
-        };
+		const domain = {
+			name: domainName,
+			version: domainVersion,
+			chainId: chainId,
+			verifyingContract: contractAddress,
+		};
 
-        // Verify signature
-        let recoveredAddress;
-        try {
-            recoveredAddress = await recoverTypedDataAddress({
-                domain,
-                types,
-                primaryType: "SetInviteTier",
-                message: {
-                    users,
-                    tier: BigInt(tier),
-                    nonce: BigInt(nonce),
-                },
-                signature,
-            });
-        } catch (sigError) {
-            throw new Error(`Signature verification failed: ${sigError.message}`);
-        }
+		const types = {
+			SetInviteTier: [
+				{ name: "users", type: "address[]" },
+				{ name: "tier", type: "uint256" },
+				{ name: "nonce", type: "uint256" },
+			],
+		};
 
-        // Verify signer matches recovered address
-        if (recoveredAddress.toLowerCase() !== signer.toLowerCase()) {
-            throw new Error(`Signer mismatch (expected ${signer}, got ${recoveredAddress})`);
-        }
+		const message = {
+			users,
+			tier: BigInt(tier),
+			nonce: BigInt(nonce),
+		};
 
-        // Initialize contract
-        const contract = new ethers.Contract(
-            process.env.CONTRACT_ADDRESS,
-            CONTRACT_ABI,
-            relayerWallet
-        );
+		// Recover signer
+		const recoveredAddress = await recoverTypedDataAddress({
+			domain,
+			types,
+			primaryType: "SetInviteTier",
+			message,
+			signature,
+		});
 
-        // Check current nonce
-        const currentNonce = await contract.nonces(signer);
-        if (BigInt(nonce) !== currentNonce) {
-            throw new Error(`Nonce mismatch (expected ${currentNonce}, got ${nonce})`);
-        }
+		console.log("🔐 Recovered address:", recoveredAddress);
 
-        // Estimate gas first
-        let gasEstimate;
-        try {
-            gasEstimate = await contract.estimateGas.setInviteTierWithSig(
-                signer,
-                users,
-                tier,
-                nonce,
-                signature
-            );
-        } catch (estimationError) {
-            throw new Error(`Transaction will fail: ${estimationError.reason}`);
-        }
+		if (recoveredAddress.toLowerCase() !== signer.toLowerCase()) {
+			return res.status(401).json({
+				success: false,
+				error: `Signature mismatch: expected ${signer}, got ${recoveredAddress}`,
+			});
+		}
 
-        // Send transaction
-        const tx = await contract.setInviteTierWithSig(
-            signer,
-            users,
-            tier,
-            nonce,
-            signature,
-            {
-                gasLimit: gasEstimate.mul(120).div(100), // 20% buffer
-            }
-        );
+		const contract = new ethers.Contract(
+			contractAddress,
+			CONTRACT_ABI,
+			relayerWallet
+		);
 
-        // Return successful response
-        return res.status(200).json({
-            success: true,
-            txHash: tx.hash,
-            message: 'Transaction submitted successfully',
-            gasEstimate: gasEstimate.toString(),
-            nonce: nonce.toString()
-        });
+		const onChainNonce = await contract.nonces(signer);
+		console.log("🔢 On-chain nonce:", onChainNonce.toString());
 
-    } catch (error) {
-        logError(error, {
-            endpoint: '/api/relayTransaction',
-            body: req.body
-        });
+		if (onChainNonce.toString() !== nonce.toString()) {
+			return res.status(400).json({
+				success: false,
+				error: `Nonce mismatch. On-chain: ${onChainNonce}, Provided: ${nonce}`,
+			});
+		}
 
-        // Determine appropriate status code
-        const statusCode = error.code === 'INVALID_ARGUMENT' ? 400 : 500;
+		const tx = await contract.setInviteTierWithSig(
+			signer,
+			users,
+			tier,
+			nonce,
+			signature,
+			{ gasLimit: 10000000 }
+		);
 
-        return res.status(statusCode).json({
-            success: false,
-            error: error.message,
-            ...(process.env.NODE_ENV === 'development' && {
-                details: {
-                    code: error.code,
-                    reason: error.reason,
-                    stack: error.stack
-                }
-            })
-        });
-    }
+		console.log("✅ Transaction submitted:", tx.hash);
+
+		return res.status(200).json({
+			success: true,
+			txHash: tx.hash,
+			message: "Transaction submitted successfully",
+		});
+	} catch (err) {
+		console.error("❌ Relay error:", err);
+
+		return res.status(500).json({
+			success: false,
+			error: err.message,
+		});
+	}
 }
