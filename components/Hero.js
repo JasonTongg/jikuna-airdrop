@@ -1,267 +1,305 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { ConnectButton, WalletButton } from "@rainbow-me/rainbowkit";
 import {
 	useAccount,
-	useBalance,
-	useSignTypedData,
 	useContractRead,
+	useWriteContract,
+	useWaitForTransactionReceipt,
 } from "wagmi";
-import {
-	keccak256,
-	encodeAbiParameters,
-	recoverTypedDataAddress,
-	hashTypedData,
-	hexToBytes,
-	recoverAddress,
-} from "viem";
+import { getAddress } from "viem";
+import { ConnectButton, WalletButton } from "@rainbow-me/rainbowkit";
+
+// ABIs for the contracts
+const stakingContractABI = [
+	{
+		name: "getUserStaked",
+		type: "function",
+		stateMutability: "view",
+		inputs: [{ type: "address", name: "user" }],
+		outputs: [{ type: "uint256[]" }],
+	},
+	{
+		name: "getPendingPoints",
+		type: "function",
+		stateMutability: "view",
+		inputs: [],
+		outputs: [{ type: "uint256" }],
+	},
+	{
+		name: "stake",
+		type: "function",
+		stateMutability: "nonpayable",
+		inputs: [{ type: "uint256", name: "tokenId" }],
+		outputs: [],
+	},
+	{
+		name: "unstake",
+		type: "function",
+		stateMutability: "nonpayable",
+		inputs: [{ type: "uint256", name: "tokenId" }],
+		outputs: [],
+	},
+];
+const nftContractABI = [
+	{
+		name: "isApprovedForAll",
+		type: "function",
+		stateMutability: "view",
+		inputs: [
+			{ type: "address", name: "owner" },
+			{ type: "address", name: "operator" },
+		],
+		outputs: [{ type: "bool" }],
+	},
+	{
+		name: "setApprovalForAll",
+		type: "function",
+		stateMutability: "nonpayable",
+		inputs: [
+			{ type: "address", name: "operator" },
+			{ type: "bool", name: "approved" },
+		],
+		outputs: [],
+	},
+];
+
+// Contract Addresses
+const STAKING_CONTRACT_ADDRESS = "0x537044a96910cBB7E71D770857Be19c74C013dE0";
+const NFT_CONTRACT_ADDRESS = "0x874df014adc21d0f76c706b2f58b069487a6d71d";
 
 export default function Hero() {
 	const { address, isConnected } = useAccount();
-	const { data: balance, isLoading } = useBalance({ address });
-	const [isSigning, setIsSigning] = useState(false);
-	const [txHash, setTxHash] = useState(null);
-	const [error, setError] = useState(null);
 
-	const ContractAddress = "0x7cfe3D25a732700D71Be9C3A89e10817b2d4D321";
+	// --- State Management ---
+	const [allNfts, setAllNfts] = useState([]);
+	const [stakedIdsSet, setStakedIdsSet] = useState(new Set());
+	const [isLoading, setIsLoading] = useState(true);
+	const [pendingTokenId, setPendingTokenId] = useState(null);
+	const [refetchTrigger, setRefetchTrigger] = useState(0);
 
-	const ABI = [
-		{
-			type: "function",
-			name: "setInviteTierWithSig",
-			inputs: [
-				{ name: "signer", type: "address" },
-				{ name: "users", type: "address[]" },
-				{ name: "tier", type: "uint256" },
-				{ name: "nonce", type: "uint256" },
-				{ name: "signature", type: "bytes" },
-			],
-			outputs: [],
-			stateMutability: "nonpayable",
-		},
-		{
-			type: "function",
-			name: "nonces",
-			inputs: [{ name: "", type: "address" }],
-			outputs: [{ name: "", type: "uint256" }],
-			stateMutability: "view",
-		},
-	];
+	// --- wagmi Hooks ---
+	const { data: approveHash, writeContract: approve } = useWriteContract();
+	const { data: stakeHash, writeContract: stake } = useWriteContract();
+	const { data: unstakeHash, writeContract: unstake } = useWriteContract();
 
-	// Read the current nonce from the contract
-	const { data: currentNonce, refetch: refetchNonce } = useContractRead({
-		address: ContractAddress,
-		abi: ABI,
-		functionName: "nonces",
-		args: [address],
-		enabled: !!address,
+	// --- FIXED: Read PENDING POINTS from contract ---
+	const { data: pendingPoints, isLoading: isLoadingPoints } = useContractRead({
+		address: STAKING_CONTRACT_ADDRESS,
+		abi: stakingContractABI,
+		functionName: "getPendingPoints",
+		args: [],
+		account: address, // This tells the hook to make the call from the user's address
+		enabled: isConnected,
+		refetchInterval: 5000,
+		query: { queryKey: ["getPendingPoints", address, refetchTrigger] },
 	});
 
-	// EIP-712 Typed Data structure
-	const domain = {
-		name: "NFT",
-		version: "1",
-		chainId: 11155111, // Replace with your chainId
-		verifyingContract: ContractAddress,
-	};
+	const { data: stakedIds, isFetching: isFetchingStakedIds } = useContractRead({
+		address: STAKING_CONTRACT_ADDRESS,
+		abi: stakingContractABI,
+		functionName: "getUserStaked",
+		args: [address],
+		enabled: isConnected,
+		query: { queryKey: ["getUserStaked", address, refetchTrigger] },
+	});
 
-	const types = {
-		SetInviteTier: [
-			{ name: "users", type: "address[]" },
-			{ name: "tier", type: "uint256" },
-			{ name: "nonce", type: "uint256" },
-		],
-	};
+	const { data: isApproved, refetch: refetchApprovalStatus } = useContractRead({
+		address: NFT_CONTRACT_ADDRESS,
+		abi: nftContractABI,
+		functionName: "isApprovedForAll",
+		args: [address, STAKING_CONTRACT_ADDRESS],
+		enabled: isConnected,
+	});
 
-	const { signTypedDataAsync } = useSignTypedData();
+	// --- Data Fetching and Combining ---
+	const fetchAndCombineData = useCallback(async () => {
+		if (!isConnected || !address) return;
+		setIsLoading(true);
 
-	const handleSignAndSubmit = async () => {
-		if (!address) {
-			setError("Please connect your wallet first");
-			return;
-		}
+		const unstakedApiUrl = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/users/${address}/tokens/v7?contract=${NFT_CONTRACT_ADDRESS}`;
+		const unstakedPromise = fetch(unstakedApiUrl).then((res) => res.json());
 
-		setIsSigning(true);
-		setError(null);
+		const [unstakedData] = await Promise.all([
+			unstakedPromise,
+			stakedIds !== undefined,
+		]);
 
-		try {
-			await refetchNonce();
+		const unstakedList = unstakedData.tokens || [];
+		const localStakedIds = new Set((stakedIds || []).map((id) => Number(id)));
+		setStakedIdsSet(localStakedIds);
 
-			if (currentNonce === undefined) {
-				throw new Error("Could not fetch nonce");
-			}
-
-			const message = {
-				users: [address],
-				tier: 1,
-				nonce: Number(currentNonce),
-			};
-
-			// --- 🧱 Manual struct hash like Foundry ---
-			const typeHash = keccak256(
-				new TextEncoder().encode(
-					"setInviteTier(address[] users,uint256 tier,uint256 nonce)"
-				)
-			);
-
-			const encodedUsers = encodeAbiParameters(
-				[{ type: "address[]" }],
-				[message.users]
-			);
-			const usersHash = keccak256(encodedUsers);
-
-			const structHash = keccak256(
-				encodeAbiParameters(
-					[
-						{ type: "bytes32" },
-						{ type: "bytes32" },
-						{ type: "uint256" },
-						{ type: "uint256" },
-					],
-					[typeHash, usersHash, BigInt(message.tier), BigInt(message.nonce)]
-				)
-			);
-
-			// --- 🔐 domain separator like OZ _hashTypedDataV4 ---
-			const domainSeparator = keccak256(
-				encodeAbiParameters(
-					[
-						{ type: "bytes32" },
-						{ type: "bytes32" },
-						{ type: "bytes32" },
-						{ type: "uint256" },
-						{ type: "address" },
-					],
-					[
-						keccak256(
-							new TextEncoder().encode(
-								"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-							)
-						),
-						keccak256(new TextEncoder().encode(domain.name)),
-						keccak256(new TextEncoder().encode(domain.version)),
-						BigInt(domain.chainId),
-						domain.verifyingContract,
-					]
-				)
-			);
-
-			const digest = keccak256(
-				`0x1901${domainSeparator.slice(2)}${structHash.slice(2)}`
-			);
-
-			// Sign manually the digest (note: this needs Wallet to support EIP-712)
-			const signature = await signTypedDataAsync({
-				domain,
-				types,
-				primaryType: "SetInviteTier",
-				message,
-			});
-
-			// Verify recovered signer
-			const recovered = recoverAddress({
-				hash: digest,
-				signature,
-			});
-
-			console.log("✅ signer       :", address);
-			console.log("✅ recovered    :", recovered);
-			console.log(
-				"✅ match        :",
-				recovered.toLowerCase() === address.toLowerCase()
-			);
-			console.log("🧱 typeHash     :", typeHash);
-			console.log("📦 usersHash    :", usersHash);
-			console.log("🧩 structHash   :", structHash);
-			console.log("🏛️ domainSep    :", domainSeparator);
-			console.log("🔐 digest       :", digest);
-			console.log("✍️ signature    :", signature);
-
-			// Relay
-			const response = await fetch("/api/relayTransaction", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
+		const stakedList = Array.from(localStakedIds).map((id) => {
+			const tokenId = id.toString();
+			return {
+				token: {
+					tokenId,
+					name: `Little Origins #${tokenId}`,
+					imageSmall: `https://bafybeidh6trxtd2pb7isozlrf42vwhpokbg7f3uadkrgs4iqlrl4oxmh2a.ipfs.w3s.link/${tokenId}.png`,
 				},
-				body: JSON.stringify({
-					signer: address,
-					users: message.users,
-					tier: message.tier,
-					nonce: message.nonce,
-					signature,
-				}),
-			});
+			};
+		});
 
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				throw new Error(
-					errorData.error || `HTTP error! status: ${response.status}`
-				);
-			}
+		const combined = [...unstakedList, ...stakedList];
+		combined.sort(
+			(a, b) => parseInt(a.token.tokenId) - parseInt(b.token.tokenId)
+		);
 
-			const result = await response.json();
+		setAllNfts(combined);
+		setIsLoading(false);
+	}, [isConnected, address, stakedIds]);
 
-			if (result.success) {
-				setTxHash(result.txHash);
-			} else {
-				console.error("Relayer Error:", result);
-				setError(result.error || "Transaction failed");
-			}
-		} catch (err) {
-			console.error("Error:", err);
-			setError(err.message || "An error occurred");
-		} finally {
-			setIsSigning(false);
-		}
+	useEffect(() => {
+		fetchAndCombineData();
+	}, [fetchAndCombineData]);
+
+	useEffect(() => {
+		console.log("Pending Points:", pendingPoints?.toString());
+	}, [pendingPoints]);
+
+	// --- Transaction Handlers ---
+	const { isLoading: isApproving } = useWaitForTransactionReceipt({
+		hash: approveHash,
+		onSuccess: () => refetchApprovalStatus(),
+	});
+
+	const useStakingTransaction = (hash) =>
+		useWaitForTransactionReceipt({
+			hash,
+			onSuccess: () => {
+				console.log("Masuk");
+				setPendingTokenId(null);
+				fetchAndCombineData();
+				console.log("Selesai");
+			},
+		});
+	const { isLoading: isStaking } = useStakingTransaction(stakeHash);
+	const { isLoading: isUnstaking } = useStakingTransaction(unstakeHash);
+
+	const handleApprove = () =>
+		approve({
+			address: NFT_CONTRACT_ADDRESS,
+			abi: nftContractABI,
+			functionName: "setApprovalForAll",
+			args: [STAKING_CONTRACT_ADDRESS, true],
+		});
+	const handleStake = (tokenId) => {
+		setPendingTokenId(tokenId);
+		stake({
+			address: STAKING_CONTRACT_ADDRESS,
+			abi: stakingContractABI,
+			functionName: "stake",
+			args: [parseInt(tokenId)],
+		});
+	};
+	const handleUnstake = (tokenId) => {
+		setPendingTokenId(tokenId);
+		unstake({
+			address: STAKING_CONTRACT_ADDRESS,
+			abi: stakingContractABI,
+			functionName: "unstake",
+			args: [parseInt(tokenId)],
+		});
 	};
 
 	return (
-		<div className='bg-green-400 w-full min-h-screen flex items-center justify-center'>
+		<div className='bg-green-400 w-full min-h-screen flex items-center justify-center text-center text-white p-4'>
 			<motion.div
-				initial={{ transform: "translateX(-100px)", opacity: 0 }}
-				whileInView={{ transform: "translateX(0px)", opacity: 1 }}
-				exit={{ transform: "translateX(-100px)", opacity: 0 }}
+				initial={{ y: -20, opacity: 0 }}
+				animate={{ y: 0, opacity: 1 }}
 				transition={{ duration: 0.5 }}
-				className='max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col items-center justify-center gap-5'
+				className='w-full max-w-screen-xl mx-auto flex flex-col items-center justify-center gap-5'
 			>
 				{!isConnected ? (
-					<div>
-						<WalletButton wallet='rainbow' />
+					<div className='flex flex-wrap justify-center gap-4'>
 						<WalletButton wallet='metamask' />
 						<WalletButton wallet='coinbase' />
-						<WalletButton wallet='walletconnect' />
 					</div>
 				) : (
-					<div className='flex flex-col items-center gap-4'>
-						{address && <p>Address: {address}</p>}
-						{balance && (
+					<div className='flex flex-col gap-6 items-center bg-black bg-opacity-20 p-6 rounded-lg w-full'>
+						<div className='text-lg'>
 							<p>
-								{isLoading
-									? "Loading..."
-									: `${balance?.formatted} ${balance?.symbol}`}
+								<strong>Connected as:</strong> {getAddress(address)}
 							</p>
-						)}
-						{currentNonce !== undefined && (
-							<p>Current Nonce: {currentNonce.toString()}</p>
-						)}
+							<p className='mt-1'>
+								<strong>Pending Points:</strong>{" "}
+								<span className='font-bold text-yellow-400'>
+									{isLoadingPoints ? "..." : pendingPoints?.toString() || "0"}
+								</span>
+							</p>
+							{!isApproved && (
+								<button
+									onClick={handleApprove}
+									disabled={isApproving}
+									className='btn-primary mt-4'
+								>
+									{isApproving ? "Approving..." : "Approve Staking"}
+								</button>
+							)}
+						</div>
 
-						<button
-							onClick={handleSignAndSubmit}
-							disabled={isSigning || currentNonce === undefined}
-							className='mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400'
-						>
-							{isSigning ? "Signing..." : "Sign & Set Tier (Gasless)"}
-						</button>
+						<div className='w-full'>
+							<h3 className='text-2xl font-bold mb-4'>Your NFT Collection</h3>
+							{isLoading || isFetchingStakedIds ? (
+								<p>Loading your collection...</p>
+							) : allNfts.length > 0 ? (
+								<div className='grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 max-h-[60vh] overflow-y-auto p-4 bg-gray-900/30 rounded-md'>
+									{allNfts.map(({ token }) => {
+										const isStaked = stakedIdsSet.has(Number(token.tokenId));
+										const isPending = pendingTokenId === token.tokenId;
 
-						{txHash && (
-							<div className='text-green-600'>
-								Transaction sent! Hash: {txHash}
-							</div>
-						)}
-						{error && <div className='text-red-600'>Error: {error}</div>}
+										return (
+											<div
+												key={token.tokenId}
+												className='rounded-lg overflow-hidden flex flex-col bg-gray-800'
+											>
+												<img
+													src={
+														token.imageSmall ||
+														`https://bafybeidh6trxtd2pb7isozlrf42vwhpokbg7f3uadkrgs4iqlrl4oxmh2a.ipfs.w3s.link/${token.tokenId}.png`
+													}
+													alt={token.name}
+													className='w-full h-auto object-cover aspect-square'
+												/>
+												<div className='p-2 flex-grow flex flex-col justify-between'>
+													<p className='text-sm font-bold truncate'>
+														{token.name || `Little Origins #${token.tokenId}`}
+													</p>
+													{isApproved &&
+														(isStaked ? (
+															<button
+																onClick={() => handleUnstake(token.tokenId)}
+																disabled={isUnstaking && isPending}
+																className='btn-secondary mt-2 w-full'
+															>
+																{isUnstaking && isPending
+																	? "Unstaking..."
+																	: "Unstake"}
+															</button>
+														) : (
+															<button
+																onClick={() => handleStake(token.tokenId)}
+																disabled={isStaking && isPending}
+																className='btn-primary mt-2 w-full'
+															>
+																{isStaking && isPending
+																	? "Staking..."
+																	: "Stake"}
+															</button>
+														))}
+												</div>
+											</div>
+										);
+									})}
+								</div>
+							) : (
+								<p>You have no NFTs from this collection.</p>
+							)}
+						</div>
 					</div>
 				)}
-				<ConnectButton />
+				<div className='mt-4'>
+					<ConnectButton />
+				</div>
 			</motion.div>
 		</div>
 	);
