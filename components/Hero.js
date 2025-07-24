@@ -2,14 +2,14 @@ import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
 	useAccount,
+	usePublicClient, // 👈 NEW: Import the public client hook
 	useContractRead,
 	useWriteContract,
-	useWaitForTransactionReceipt,
 } from "wagmi";
 import { getAddress } from "viem";
 import { ConnectButton, WalletButton } from "@rainbow-me/rainbowkit";
 
-// ABIs for the contracts
+// ABIs and Contract Addresses remain the same...
 const stakingContractABI = [
 	{
 		name: "getUserStaked",
@@ -62,13 +62,12 @@ const nftContractABI = [
 		outputs: [],
 	},
 ];
-
-// Contract Addresses
 const STAKING_CONTRACT_ADDRESS = "0x537044a96910cBB7E71D770857Be19c74C013dE0";
 const NFT_CONTRACT_ADDRESS = "0x874df014adc21d0f76c706b2f58b069487a6d71d";
 
 export default function Hero() {
 	const { address, isConnected } = useAccount();
+	const publicClient = usePublicClient(); // 👈 NEW: Get the public client instance
 
 	// --- State Management ---
 	const [allNfts, setAllNfts] = useState([]);
@@ -78,22 +77,21 @@ export default function Hero() {
 	const [refetchTrigger, setRefetchTrigger] = useState(0);
 
 	// --- wagmi Hooks ---
-	const { data: approveHash, writeContract: approve } = useWriteContract();
-	const { data: stakeHash, writeContract: stake } = useWriteContract();
-	const { data: unstakeHash, writeContract: unstake } = useWriteContract();
+	const { writeContractAsync: approve } = useWriteContract();
+	const { writeContractAsync: stake } = useWriteContract();
+	const { writeContractAsync: unstake } = useWriteContract();
 
-	// --- FIXED: Read PENDING POINTS from contract ---
+	// All useContractRead hooks remain the same...
 	const { data: pendingPoints, isLoading: isLoadingPoints } = useContractRead({
 		address: STAKING_CONTRACT_ADDRESS,
 		abi: stakingContractABI,
 		functionName: "getPendingPoints",
 		args: [],
-		account: address, // This tells the hook to make the call from the user's address
+		account: address,
 		enabled: isConnected,
 		refetchInterval: 5000,
 		query: { queryKey: ["getPendingPoints", address, refetchTrigger] },
 	});
-
 	const { data: stakedIds, isFetching: isFetchingStakedIds } = useContractRead({
 		address: STAKING_CONTRACT_ADDRESS,
 		abi: stakingContractABI,
@@ -102,8 +100,7 @@ export default function Hero() {
 		enabled: isConnected,
 		query: { queryKey: ["getUserStaked", address, refetchTrigger] },
 	});
-
-	const { data: isApproved, refetch: refetchApprovalStatus } = useContractRead({
+	const { data: isApproved } = useContractRead({
 		address: NFT_CONTRACT_ADDRESS,
 		abi: nftContractABI,
 		functionName: "isApprovedForAll",
@@ -111,23 +108,19 @@ export default function Hero() {
 		enabled: isConnected,
 	});
 
-	// --- Data Fetching and Combining ---
+	// The data fetching logic remains the same...
 	const fetchAndCombineData = useCallback(async () => {
 		if (!isConnected || !address) return;
 		setIsLoading(true);
-
 		const unstakedApiUrl = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/users/${address}/tokens/v7?contract=${NFT_CONTRACT_ADDRESS}`;
 		const unstakedPromise = fetch(unstakedApiUrl).then((res) => res.json());
-
 		const [unstakedData] = await Promise.all([
 			unstakedPromise,
 			stakedIds !== undefined,
 		]);
-
 		const unstakedList = unstakedData.tokens || [];
 		const localStakedIds = new Set((stakedIds || []).map((id) => Number(id)));
 		setStakedIdsSet(localStakedIds);
-
 		const stakedList = Array.from(localStakedIds).map((id) => {
 			const tokenId = id.toString();
 			return {
@@ -138,12 +131,10 @@ export default function Hero() {
 				},
 			};
 		});
-
 		const combined = [...unstakedList, ...stakedList];
 		combined.sort(
 			(a, b) => parseInt(a.token.tokenId) - parseInt(b.token.tokenId)
 		);
-
 		setAllNfts(combined);
 		setIsLoading(false);
 	}, [isConnected, address, stakedIds]);
@@ -152,53 +143,65 @@ export default function Hero() {
 		fetchAndCombineData();
 	}, [fetchAndCombineData]);
 
-	useEffect(() => {
-		console.log("Pending Points:", pendingPoints?.toString());
-	}, [pendingPoints]);
-
-	// --- Transaction Handlers ---
-	const { isLoading: isApproving } = useWaitForTransactionReceipt({
-		hash: approveHash,
-		onSuccess: () => refetchApprovalStatus(),
-	});
-
-	const useStakingTransaction = (hash) =>
-		useWaitForTransactionReceipt({
-			hash,
-			onSuccess: () => {
-				console.log("Masuk");
-				setPendingTokenId(null);
-				fetchAndCombineData();
-				console.log("Selesai");
-			},
-		});
-	const { isLoading: isStaking } = useStakingTransaction(stakeHash);
-	const { isLoading: isUnstaking } = useStakingTransaction(unstakeHash);
-
-	const handleApprove = () =>
-		approve({
-			address: NFT_CONTRACT_ADDRESS,
-			abi: nftContractABI,
-			functionName: "setApprovalForAll",
-			args: [STAKING_CONTRACT_ADDRESS, true],
-		});
-	const handleStake = (tokenId) => {
-		setPendingTokenId(tokenId);
-		stake({
-			address: STAKING_CONTRACT_ADDRESS,
-			abi: stakingContractABI,
-			functionName: "stake",
-			args: [parseInt(tokenId)],
-		});
+	// --- REWRITTEN: Transaction Handlers ---
+	const handleApprove = async () => {
+		setPendingTokenId("approve"); // Use a special string for the global approve button
+		try {
+			const hash = await approve({
+				address: NFT_CONTRACT_ADDRESS,
+				abi: nftContractABI,
+				functionName: "setApprovalForAll",
+				args: [STAKING_CONTRACT_ADDRESS, true],
+			});
+			await publicClient.waitForTransactionReceipt({ hash });
+			setRefetchTrigger((c) => c + 1); // Refetch approval status
+		} catch (error) {
+			console.error("Approval failed:", error.message);
+		} finally {
+			setPendingTokenId(null);
+		}
 	};
-	const handleUnstake = (tokenId) => {
+
+	const handleStake = async (tokenId) => {
 		setPendingTokenId(tokenId);
-		unstake({
-			address: STAKING_CONTRACT_ADDRESS,
-			abi: stakingContractABI,
-			functionName: "unstake",
-			args: [parseInt(tokenId)],
-		});
+		try {
+			const hash = await stake({
+				address: STAKING_CONTRACT_ADDRESS,
+				abi: stakingContractABI,
+				functionName: "stake",
+				args: [parseInt(tokenId)],
+			});
+			console.log("Stake transaction sent. Hash:", hash);
+			await publicClient.waitForTransactionReceipt({ hash });
+			console.log("Stake transaction successful!");
+			setRefetchTrigger((c) => c + 1);
+			console.log("Done Refetch");
+		} catch (error) {
+			console.error("Stake failed:", error.message);
+		} finally {
+			setPendingTokenId(null);
+		}
+	};
+
+	const handleUnstake = async (tokenId) => {
+		setPendingTokenId(tokenId);
+		try {
+			const hash = await unstake({
+				address: STAKING_CONTRACT_ADDRESS,
+				abi: stakingContractABI,
+				functionName: "unstake",
+				args: [parseInt(tokenId)],
+			});
+			console.log("Unstake transaction sent. Hash:", hash);
+			await publicClient.waitForTransactionReceipt({ hash });
+			console.log("Unstake transaction successful!");
+			setRefetchTrigger((c) => c + 1);
+			console.log("Done Refetch");
+		} catch (error) {
+			console.error("Unstake failed:", error.message);
+		} finally {
+			setPendingTokenId(null);
+		}
 	};
 
 	return (
@@ -229,10 +232,12 @@ export default function Hero() {
 							{!isApproved && (
 								<button
 									onClick={handleApprove}
-									disabled={isApproving}
+									disabled={pendingTokenId === "approve"}
 									className='btn-primary mt-4'
 								>
-									{isApproving ? "Approving..." : "Approve Staking"}
+									{pendingTokenId === "approve"
+										? "Approving..."
+										: "Approve Staking"}
 								</button>
 							)}
 						</div>
@@ -268,22 +273,18 @@ export default function Hero() {
 														(isStaked ? (
 															<button
 																onClick={() => handleUnstake(token.tokenId)}
-																disabled={isUnstaking && isPending}
+																disabled={isPending}
 																className='btn-secondary mt-2 w-full'
 															>
-																{isUnstaking && isPending
-																	? "Unstaking..."
-																	: "Unstake"}
+																{isPending ? "Unstaking..." : "Unstake"}
 															</button>
 														) : (
 															<button
 																onClick={() => handleStake(token.tokenId)}
-																disabled={isStaking && isPending}
+																disabled={isPending}
 																className='btn-primary mt-2 w-full'
 															>
-																{isStaking && isPending
-																	? "Staking..."
-																	: "Stake"}
+																{isPending ? "Staking..." : "Stake"}
 															</button>
 														))}
 												</div>
