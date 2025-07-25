@@ -7,64 +7,53 @@ import { useSelector } from "react-redux";
 import { fetchDexscreener, fetchDextools, fetchUniswap } from "@/store/data";
 import Store from "@/store/store";
 import HowToBuy from "@/components/HowToBuy";
+import Tabs from "@mui/material/Tabs";
+import Tab from "@mui/material/Tab";
+import Box from "@mui/material/Box";
+import { useAccount } from "wagmi";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 export default function Index() {
-  // Use useSelector to get the relevant state from Redux
-  const {
-    twitter,
-    telegram,
-    address,
-    dextoolsUrl,
-    uniswapUrl,
-    dexscreenerUrl,
-    pairAddress,
-  } = useSelector((state) => state.data);
+	// Use useSelector to get the relevant state from Redux
+	const { littleOriginPoint, jikunaPoint } = useSelector((state) => state.data);
+	const { address, isConnected } = useAccount();
 
-  const props = {
-    address,
-    twitter,
-    telegram,
-    dextoolsUrl,
-    uniswapUrl,
-    dexscreenerUrl,
-    pairAddress,
-  };
+	const [value, setValue] = React.useState("one");
 
-  return (
-    <div className="w-full relative">
-      <Hero {...props} />
-      <About {...props} />
-      <HowToBuy {...props} />
-      <Tokenomics {...props} />
-      <Social {...props} />
-    </div>
-  );
-}
+	const handleChange = (event, newValue) => {
+		setValue(newValue);
+	};
 
-export async function getServerSideProps() {
-  const state = Store.getState();
-  const { twitter, telegram, address, pairAddress } = state.data;
+	return (
+		<div className='bg-gray-500 min-h-screen w-full relative pt-20 flex flex-col items-center justify-start'>
+			{isConnected && address ? (
+				<h2 className='text-2xl font-bold mb-4'>
+					Total Point: {Number(littleOriginPoint) + Number(jikunaPoint)}
+				</h2>
+			) : (
+				<ConnectButton />
+			)}
+			<Box>
+				<Tabs
+					value={value}
+					onChange={handleChange}
+					textColor='secondary'
+					indicatorColor='secondary'
+					aria-label='secondary tabs example'
+				>
+					<Tab value='one' label='Item One' />
+					<Tab value='two' label='Item Two' />
+					<Tab value='three' label='Item Three' />
+					<Tab value='four' label='Item Four' />
+				</Tabs>
+			</Box>
 
-  await Store.dispatch(fetchDexscreener(address));
-  await Store.dispatch(fetchDextools(pairAddress));
-  await Store.dispatch(fetchUniswap(address));
-
-  // After dispatching actions, get the updated state
-  const updatedState = Store.getState().data;
-
-  const additionalProps = {
-    address,
-    twitter,
-    telegram,
-    dextoolsUrl: updatedState.dextoolsUrl,
-    uniswapUrl: updatedState.uniswapUrl,
-    dexscreenerUrl: updatedState.dexscreenerUrl,
-  };
-
-  return {
-    props: {
-      message: "Welcome to the SSR website!",
-      ...additionalProps,
-    },
-  };
+			<Box>
+				{value === "one" && <Hero />}
+				{value === "two" && <About />}
+				{value === "three" && <HowToBuy />}
+				{value === "four" && <Tokenomics />}
+			</Box>
+		</div>
+	);
 }
