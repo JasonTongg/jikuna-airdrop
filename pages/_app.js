@@ -18,6 +18,7 @@ import {
 	sepolia,
 } from "wagmi/chains";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import ErrorComponts from "../components/Error";
 
 const monad = {
 	id: 10143,
@@ -53,7 +54,9 @@ function MyApp({ Component, pageProps }) {
 				<QueryClientProvider client={queryClient}>
 					<RainbowKitProvider theme={darkTheme()} coolMode={true}>
 						<Layout>
-							<Component {...pageProps} />
+							<ErrorComponts>
+								<Component {...pageProps} />
+							</ErrorComponts>
 						</Layout>
 					</RainbowKitProvider>
 				</QueryClientProvider>
