@@ -13,21 +13,21 @@ export default function Document() {
           href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;1,300&family=Ubuntu:wght@300&display=swap"
           rel="stylesheet"
         />
-        <link rel="icon" href="https://Domain/assets/Logo" />
-        <title>Title Content</title>
+        <link rel="icon" href="./assets/logo.png" />
+        <title>Jikuna Airdrop</title>
 
-        <meta name="title" content="Title Content" />
+        <meta name="title" content="Jikuna Airdrop" />
         <meta name="description" content="Description Content" />
 
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://Domain/assets/FileName" />
-        <meta property="og:title" content="Title Content" />
+        <meta property="og:title" content="Jikuna Airdrop" />
         <meta property="og:description" content="Description Content" />
         <meta property="og:image" content="https://Domain/assets/FileName" />
 
         <meta name="twitter:card" content="summary_large_image" />
         <meta property="twitter:url" content="https://Domain/assets/FileName" />
-        <meta property="twitter:title" content="Title Content" />
+        <meta property="twitter:title" content="Jikuna Airdrop" />
         <meta property="twitter:description" content="Description Content" />
         <meta
           property="twitter:image"

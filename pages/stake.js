@@ -24,11 +24,11 @@ export default function Index() {
 	return (
 		<div className='bg-bg min-h-screen w-full relative pt-20 flex flex-col items-center justify-start'>
 			{isConnected && address ? (
-				<h2 className='text-2xl font-bold mb-4'>
+				<h2 className='text-2xl font-bold mb-4 text-white mt-[2rem]'>
 					Total Point: {Number(littleOriginPoint) + Number(jikunaPoint)}
 				</h2>
 			) : (
-				<h2 className='text-2xl font-bold mb-4'>
+				<h2 className='text-2xl font-bold mb-4 text-white mt-[2rem]'>
 					Total Point: 0
 				</h2>
 			)}

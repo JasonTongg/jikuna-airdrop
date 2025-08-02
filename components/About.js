@@ -8,6 +8,8 @@ import {
 } from "wagmi";
 import { useDispatch } from "react-redux";
 import { setJikunaPoint } from "@/store/data";
+import { toast, ToastContainer } from "react-toastify";
+import { PiCoin } from "react-icons/pi"
 
 // ABIs and Contract Addresses remain the same...
 const stakingContractABI = [
@@ -132,11 +134,15 @@ export default function About() {
 				},
 			};
 		});
-		const combined = [...unstakedList, ...stakedList];
-		combined.sort(
+		const combined = [...stakedList, ...unstakedList];
+		const nftMap = new Map(combined.map((item) => [item.token.tokenId, item]));
+		const uniqueNfts = Array.from(nftMap.values());
+
+		uniqueNfts.sort(
 			(a, b) => parseInt(a.token.tokenId) - parseInt(b.token.tokenId)
 		);
-		setAllNfts(combined);
+
+		setAllNfts(uniqueNfts);
 		setIsLoading(false);
 	}, [isConnected, address, stakedIds]);
 
@@ -147,6 +153,7 @@ export default function About() {
 	// --- REWRITTEN: Transaction Handlers ---
 	const handleApprove = async () => {
 		setPendingTokenId("approve"); // Use a special string for the global approve button
+		toast.dark("Approving NFT...");
 		try {
 			const hash = await approve({
 				address: NFT_CONTRACT_ADDRESS,
@@ -155,6 +162,29 @@ export default function About() {
 				args: [STAKING_CONTRACT_ADDRESS, true],
 			});
 			await publicClient.waitForTransactionReceipt({ hash });
+			toast.dark("Staking Approved Successfully!");
+			setTimeout(() => {
+				window.location.reload();
+			}, 2000);
+		} catch (error) {
+			console.error("Approval failed:", error.message);
+		} finally {
+			setPendingTokenId(null);
+		}
+	};
+
+	const handleUnApprove = async () => {
+		setPendingTokenId("unapprove");
+		toast.dark("Unapproving NFT...");
+		try {
+			const hash = await approve({
+				address: NFT_CONTRACT_ADDRESS,
+				abi: nftContractABI,
+				functionName: "setApprovalForAll",
+				args: [STAKING_CONTRACT_ADDRESS, false],
+			});
+			await publicClient.waitForTransactionReceipt({ hash });
+			toast.dark("Unapproval Successful!");
 			setTimeout(() => {
 				window.location.reload();
 			}, 2000);
@@ -167,6 +197,7 @@ export default function About() {
 
 	const handleStake = async (tokenId) => {
 		setPendingTokenId(tokenId);
+
 		try {
 			const hash = await stake({
 				address: STAKING_CONTRACT_ADDRESS,
@@ -175,6 +206,7 @@ export default function About() {
 				args: [parseInt(tokenId)],
 			});
 			await publicClient.waitForTransactionReceipt({ hash });
+			toast.dark("Token Stacked Successfully!");
 			setTimeout(() => {
 				window.location.reload();
 			}, 2000);
@@ -195,6 +227,7 @@ export default function About() {
 				args: [parseInt(tokenId)],
 			});
 			await publicClient.waitForTransactionReceipt({ hash });
+			toast.dark("Token Unstacked Successfully!");
 			setTimeout(() => {
 				window.location.reload();
 			}, 2000);
@@ -213,6 +246,7 @@ export default function About() {
 
 	return (
 		<div className='w-full flex items-center justify-center text-center text-white px-8 py-4'>
+			<ToastContainer />
 			<motion.div
 				initial={{ y: -20, opacity: 0 }}
 				animate={{ y: 0, opacity: 1 }}
@@ -234,14 +268,21 @@ export default function About() {
 											key={token.tokenId}
 											className='rounded-lg overflow-hidden flex flex-col bg-gray-800'
 										>
-											<img
-												src={
-													token.imageSmall ||
-													`https://bafybeidh6trxtd2pb7isozlrf42vwhpokbg7f3uadkrgs4iqlrl4oxmh2a.ipfs.w3s.link/${token.tokenId}.png`
-												}
-												alt={token.name}
-												className='w-full h-auto object-cover aspect-square'
-											/>
+											<div className='relative w-full h-auto'>
+												<img
+													src={
+														token.imageSmall ||
+														`https://bafybeidh6trxtd2pb7isozlrf42vwhpokbg7f3uadkrgs4iqlrl4oxmh2a.ipfs.w3s.link/${token.tokenId}.png`
+													}
+													alt={token.name}
+													className='w-full h-auto object-cover aspect-square'
+												/>
+												{isStaked && (
+													<div className='absolute top-0 left-0 w-full h-full bg-black bg-opacity-50 flex items-center justify-center text-white text-lg font-bold'>
+														<PiCoin className="text-white animate-bounce text-4xl" />
+													</div>
+												)}
+											</div>
 											<div className='p-2 flex-grow flex flex-col justify-between'>
 												<p className='text-sm font-bold truncate'>
 													{token.name || `Little Origins #${token.tokenId}`}

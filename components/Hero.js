@@ -245,7 +245,6 @@ export default function Hero() {
 
 	return (
 		<div className='w-full flex items-center flex-col justify-center text-center text-white px-8 py-4'>
-			<button onClick={handleUnApprove}>Unapprove</button>
 			<ToastContainer />
 			<motion.div
 				initial={{ y: -20, opacity: 0 }}
