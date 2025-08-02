@@ -212,7 +212,7 @@ export default function About() {
 	}, [pendingPoints, dispatch]);
 
 	return (
-		<div className='w-full flex items-center justify-center text-center text-white p-4'>
+		<div className='w-full flex items-center justify-center text-center text-white px-8 py-4'>
 			<motion.div
 				initial={{ y: -20, opacity: 0 }}
 				animate={{ y: 0, opacity: 1 }}

@@ -44,3 +44,31 @@ img {
 .MuiList-padding {
   padding: 0 !important;
 }
+
+.bg-bg {
+  background-image: url("../public/assets/BG.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.grid-home {
+  grid-template-columns: 1fr 550px;
+}
+
+@media only screen and (max-width: 1024px) {
+  .grid-home {
+    grid-template-columns: 1fr;
+  }
+}
+
+.bg-transparent {
+  background-color: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  border-radius: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
