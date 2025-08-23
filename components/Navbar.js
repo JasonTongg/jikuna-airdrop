@@ -43,13 +43,13 @@ export default function Navbar() {
 				}}
 			>
 				<div className="bg-white text-black">
-					<Link href="#about" onClick={handleClose}>
+					<Link href="/#product" onClick={handleClose}>
 						<MenuItem>Product</MenuItem>
 					</Link>
-					<Link href="#how" onClick={handleClose}>
+					<Link href="/stake" onClick={handleClose}>
 						<MenuItem>Stake</MenuItem>
 					</Link>
-					<Link href="#token" onClick={handleClose}>
+					<Link href="/point" onClick={handleClose}>
 						<MenuItem>Airdrop</MenuItem>
 					</Link>
 				</div>
